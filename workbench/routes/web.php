@@ -163,10 +163,13 @@ Route::get('/demo-benchmark', function () {
         $start = microtime(true);
 
         try {
-            // The results have to be resolved before the wall time is read,
-            // so keep them in a variable rather than inlining the call into
-            // the array literal after the timing key.
-            $results = Concurrency::driver($driver)->run($tasks(), timeout: 15);
+            // Resolve the results before reading the wall time, so keep them
+            // in a variable rather than inlining the call after the timing
+            // key. The timeout is passed positionally on purpose: on Laravel
+            // 12 the sync and process drivers declare no $timeout parameter,
+            // and a named argument they do not know is a fatal Error, while
+            // an extra positional argument is simply ignored.
+            $results = Concurrency::driver($driver)->run($tasks(), 15);
 
             $benchmark[$driver] = [
                 'wall_time_seconds' => round(microtime(true) - $start, 2),

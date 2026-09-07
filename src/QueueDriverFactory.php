@@ -9,7 +9,7 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Arr;
 
 /**
- * Builds the queue concurrency driver for one instance name.
+ * Builds the queue concurrency driver for one registered instance name.
  *
  * This is a class rather than a closure in the service provider because
  * MultipleInstanceManager::extend() rebinds the callback it is handed to the
@@ -23,22 +23,24 @@ class QueueDriverFactory
     }
 
     /**
-     * @param  array<string, mixed>  $resolved  The config the manager resolved for this instance.
+     * @param  array<string, mixed>  $resolved  The config the manager resolved for the instance being built.
      */
     public function __invoke(Application $app, array $resolved = []): QueueDriver
     {
         $config = $app->make(ConfigRepository::class);
 
-        // A released manager only reads "concurrency.driver.<name>", and when
-        // that key is missing it invents ['driver' => <name>]. Anything richer
-        // than that placeholder is a real instance config the manager already
-        // found, and it describes the instance being resolved rather than this
-        // factory's own name, so the name keyed lookups are skipped.
+        // The manager routes by driver name, not instance name. When it finds
+        // a legacy "concurrency.driver.<other>" entry whose driver is "queue"
+        // it still calls the creator registered as "queue", handing over that
+        // entry as $resolved. Anything richer than the bare placeholder the
+        // manager invents for an unconfigured name is therefore a complete
+        // instance config for some other instance, and this factory's own
+        // name keyed options must stay out of it.
         $placeholder = $resolved === [] || $resolved === ['driver' => $this->name];
 
         $options = array_merge(
-            Arr::except((array) $config->get('queue-concurrency', []), ['instances']),
-            $placeholder ? $this->instanceOptions($config) : [],
+            static::defaults($config),
+            $placeholder ? static::optionsFor($config, $this->name) : [],
             $resolved,
         );
 
@@ -51,16 +53,30 @@ class QueueDriverFactory
     }
 
     /**
-     * Get the configured option overrides for this instance name.
+     * The options every instance starts from.
      *
      * @return array<string, mixed>
      */
-    protected function instanceOptions(ConfigRepository $config): array
+    public static function defaults(ConfigRepository $config): array
+    {
+        return Arr::except((array) $config->get('queue-concurrency', []), ['instances']);
+    }
+
+    /**
+     * The options configured for a named instance, by instance name.
+     *
+     * Only the two sources the manager cannot deliver itself are read here.
+     * A legacy "concurrency.driver.<name>" entry is already handed to the
+     * creator as its resolved config, so reading it by name as well would
+     * let one instance's options leak into another.
+     *
+     * @return array<string, mixed>
+     */
+    public static function optionsFor(ConfigRepository $config, string $name): array
     {
         return array_merge(
-            (array) $config->get('queue-concurrency.instances.'.$this->name, []),
-            (array) $config->get('concurrency.driver.'.$this->name, []),
-            (array) $config->get('concurrency.drivers.'.$this->name, []),
+            (array) $config->get('queue-concurrency.instances.'.$name, []),
+            (array) $config->get('concurrency.drivers.'.$name, []),
         );
     }
 }
