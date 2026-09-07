@@ -65,12 +65,7 @@ submit-poll-webhook flow just because the work is too heavy for the web node.
 ## Requirements
 
 - PHP 8.2+
-- Laravel 11, 12, or 13
-
-Laravel 11 works and is covered by the test suite, but it is end of life and
-every 11.x release now carries an unpatched security advisory, so Composer's
-advisory policy will refuse to install it unless you turn that policy off.
-Laravel 12 and 13 install normally.
+- Laravel 12 or 13
 
 ## Installation
 
