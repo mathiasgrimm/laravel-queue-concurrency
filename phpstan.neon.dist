@@ -1,0 +1,24 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+    paths:
+        - src
+    excludePaths:
+        - tests
+    ignoreErrors:
+        # QueueDriver, InvokeQueuedClosure and TaskResult are a verbatim port of
+        # laravel/framework#61273, kept in step with the pull request so it stays
+        # cheap to re-sync. The framework does not annotate array shapes to this
+        # level, and adding them here would fork the files for no behavioural
+        # gain. Everything this package writes itself is checked at level 6.
+        -
+            identifier: missingType.iterableValue
+            paths:
+                - src/QueueDriver.php
+                - src/InvokeQueuedClosure.php
+                - src/TaskResult.php
+        -
+            identifier: missingType.parameter
+            path: src/InvokeQueuedClosure.php

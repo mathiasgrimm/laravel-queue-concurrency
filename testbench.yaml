@@ -1,0 +1,20 @@
+providers:
+  - MathiasGrimm\QueueConcurrency\QueueConcurrencyServiceProvider
+
+env:
+  - APP_DEBUG=true
+  - DB_CONNECTION=sqlite
+  - DB_DATABASE=workbench/database/database.sqlite
+  - QUEUE_CONNECTION=database
+  - CACHE_STORE=file
+  - CONCURRENCY_DRIVER=queue
+
+workbench:
+  start: '/'
+  install: true
+  discovers:
+    web: true
+  build:
+    - create-sqlite-db
+    - db:wipe
+    - migrate

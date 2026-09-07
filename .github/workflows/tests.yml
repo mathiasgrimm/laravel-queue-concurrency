@@ -1,0 +1,64 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+        laravel: ['^11.0', '^12.0', '^13.0']
+        exclude:
+          # Laravel 13 requires PHP 8.3.
+          - php: '8.2'
+            laravel: '^13.0'
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      # Laravel 11 is end of life and every 11.x release carries an unpatched
+      # security advisory, so Composer's advisory policy refuses to install it.
+      # The driver itself works there, and this proves it, but the policy has
+      # to come off for the install to resolve at all.
+      - name: Allow end of life Laravel
+        if: matrix.laravel == '^11.0'
+        run: composer config policy.advisories.block false
+
+      - name: Install dependencies
+        run: composer update --with="laravel/framework:${{ matrix.laravel }}" -W --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests
+        run: composer test
+
+  quality:
+    runs-on: ubuntu-latest
+    name: Static analysis and style
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Static analysis
+        run: composer analyse
+
+      - name: Code style
+        run: vendor/bin/pint --test
