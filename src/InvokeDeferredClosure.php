@@ -17,18 +17,20 @@ use Throwable;
  * It exists instead of CallQueuedClosure for one reason: on a synchronous
  * queue link a rethrown failure is not a recorded failure, it is what makes
  * a failover queue treat the link as dead and run the task again on the next
- * one. Everywhere else it behaves like CallQueuedClosure would.
+ * one. Everywhere else it behaves like CallQueuedClosure would: the worker
+ * decides how many attempts it gets, the closure may ask for the job, and a
+ * closure whose models are gone is discarded rather than failed.
  */
 class InvokeDeferredClosure implements ShouldQueue
 {
     use InteractsWithQueue, Queueable;
 
     /**
-     * The number of times the job may be attempted.
+     * Delete the job when its models no longer exist, as CallQueuedClosure does.
      *
-     * @var int
+     * @var bool
      */
-    public $tries = 1;
+    public $deleteWhenMissingModels = true;
 
     public function __construct(public SerializableClosure $task)
     {
@@ -41,7 +43,7 @@ class InvokeDeferredClosure implements ShouldQueue
     public function handle(ContainerContract $container): void
     {
         try {
-            $container->call($this->task->getClosure());
+            $container->call($this->task->getClosure(), ['job' => $this]);
         } catch (Throwable $e) {
             if ($this->job instanceof SyncJob) {
                 report($e);

@@ -3,6 +3,7 @@
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Queue\Events\QueueFailedOver;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Concurrency;
 use Illuminate\Support\Facades\DB;
@@ -126,6 +127,28 @@ it('returns results when the chain falls through to sync', function () {
         'a' => fn () => 1 + 1,
         'b' => fn () => 'two',
     ], timeout: 3))->toBe(['a' => 2, 'b' => 'two']);
+});
+
+// Work that ran during dispatch is not bounded by the timeout, so a slow later
+// task can outlive an earlier envelope's TTL. The envelope read back right
+// after dispatch is what survives that; the poll alone would report 1 of 2.
+it('keeps an envelope a later fall through task outlived', function () {
+    useChain(['dead', 'sync']);
+
+    try {
+        $results = Concurrency::driver('queue')->run([
+            'first' => fn () => 'kept',
+            'second' => function () {
+                Carbon::setTestNow(Carbon::now()->addSeconds(120));
+
+                return 'slow';
+            },
+        ], timeout: 3);
+    } finally {
+        Carbon::setTestNow();
+    }
+
+    expect($results)->toBe(['first' => 'kept', 'second' => 'slow']);
 });
 
 it('reports a sync fall through failure the way plain sync does', function () {
