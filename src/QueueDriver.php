@@ -359,9 +359,18 @@ class QueueDriver implements Driver
             );
         }
 
-        // A failover chain is only as usable as its weakest link.
+        // A failover chain is only as usable as its weakest link, and a chain
+        // with no links at all would only fail later, inside the dispatch.
         if ($driver === 'failover') {
-            foreach ($this->failoverLinks($connection) as $link) {
+            $links = $this->failoverLinks($connection);
+
+            if ($links === []) {
+                throw new RuntimeException(
+                    "The [{$connection}] failover queue connection has no connections to fall through, so its jobs could never be dispatched."
+                );
+            }
+
+            foreach ($links as $link) {
                 $this->ensureQueueConnectionIsSupported($link, [...$seen, $connection]);
             }
         }
@@ -413,12 +422,17 @@ class QueueDriver implements Driver
     {
         $cacheDriver = $this->config->get('cache.stores.'.$store.'.driver');
 
-        // A failover store is only as shared as the store it may fall back to.
+        // A failover store is only as shared as the store it may fall back to,
+        // and one that falls back to itself would recurse on the first read.
         if ($cacheDriver === 'failover') {
             foreach ((array) $this->config->get('cache.stores.'.$store.'.stores', []) as $fallback) {
-                if (! in_array($fallback, $seen, true)) {
-                    $this->ensureStoreIsSupported($fallback, $inline, [...$seen, $store]);
+                if (in_array($fallback, [...$seen, $store], true)) {
+                    throw new RuntimeException(
+                        "The [{$fallback}] failover cache store refers back to itself, so results could never be read."
+                    );
                 }
+
+                $this->ensureStoreIsSupported($fallback, $inline, [...$seen, $store]);
             }
 
             return;

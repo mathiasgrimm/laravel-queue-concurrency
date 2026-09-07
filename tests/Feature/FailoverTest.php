@@ -188,6 +188,27 @@ it('refuses a cyclic failover chain', function () {
     Concurrency::driver('queue')->run([fn () => 1], timeout: 1);
 })->throws(RuntimeException::class, 'refers back to itself')->group('cyclic');
 
+it('refuses a failover chain with no connections', function () {
+    useChain([]);
+
+    Concurrency::driver('queue')->run([fn () => 1], timeout: 1);
+})->throws(RuntimeException::class, 'has no connections');
+
+it('refuses a failover chain with no connections when deferring, before the callback runs', function () {
+    useChain([]);
+
+    Concurrency::driver('queue')->defer([fn () => 1]);
+})->throws(RuntimeException::class, 'has no connections');
+
+it('refuses a cyclic failover cache store', function () {
+    config()->set('queue.default', 'database');
+    config()->set('cache.stores.loop_a', ['driver' => 'failover', 'stores' => ['loop_b']]);
+    config()->set('cache.stores.loop_b', ['driver' => 'failover', 'stores' => ['loop_a']]);
+    config()->set('cache.default', 'loop_a');
+
+    Concurrency::driver('queue')->run([fn () => 1], timeout: 1);
+})->throws(RuntimeException::class, 'refers back to itself');
+
 it('refuses a failover cache store whose fallback is not shared for an async run', function () {
     config()->set('queue.default', 'database');
     config()->set('cache.stores.fallback', ['driver' => 'failover', 'stores' => ['file', 'array']]);
