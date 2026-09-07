@@ -85,6 +85,23 @@ it('does not let a legacy instance inherit the default instance overrides', func
         ->and($job->timeout)->toBe(120);
 });
 
+it('clears the facade cache when a refused config evicts the manager', function () {
+    // A manager the facade already holds before the provider boots, built
+    // without any resolving callback firing, which is what an earlier
+    // provider's Concurrency::driver() call leaves behind.
+    Concurrency::swap(new ConcurrencyManager($this->app));
+
+    config()->set('queue-concurrency.instances.sync', ['queue' => 'hijacked']);
+
+    expect(fn () => (new QueueConcurrencyServiceProvider($this->app))->boot())
+        ->toThrow(InvalidArgumentException::class);
+
+    config()->set('queue-concurrency.instances', []);
+
+    // Through the facade, which is where the stale manager would hide.
+    expect(Concurrency::driver('queue'))->toBeInstanceOf(QueueDriver::class);
+});
+
 it('re-validates on the next resolution after a guard failure', function () {
     config()->set('queue-concurrency.instances.sync', ['queue' => 'hijacked']);
 
@@ -107,11 +124,13 @@ it('re-validates on the next resolution after a guard failure', function () {
 });
 
 it('refuses a legacy instance whose options are split across another config source', function () {
-    config()->set('concurrency.driver.reports', ['driver' => 'queue']);
+    // An option of its own, so this gets past the bare entry rule and reaches
+    // the split rule; the message asserted is the split rule's.
+    config()->set('concurrency.driver.reports', ['driver' => 'queue', 'timeout' => 120]);
     config()->set('queue-concurrency.instances.reports', ['queue' => 'reports']);
 
     Concurrency::driver('reports');
-})->throws(InvalidArgumentException::class, 'reports');
+})->throws(InvalidArgumentException::class, 'also has options under');
 
 it('refuses an instance named after a driver the manager already provides', function (string $name) {
     config()->set('queue-concurrency.instances.'.$name, ['queue' => 'hijacked']);

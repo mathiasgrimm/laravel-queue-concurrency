@@ -4,6 +4,7 @@ namespace MathiasGrimm\QueueConcurrency;
 
 use Illuminate\Concurrency\ConcurrencyManager;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -48,8 +49,10 @@ class QueueConcurrencyServiceProvider extends ServiceProvider
                 // The container caches the singleton before this callback runs,
                 // so without evicting it a refused config would hand out a
                 // manager with no queue creators for the rest of the request,
-                // and the guard would never run again.
+                // and the guard would never run again. The facade keeps its
+                // own copy of anything resolved through it, so clear that too.
                 $this->app->forgetInstance(ConcurrencyManager::class);
+                Facade::clearResolvedInstance(ConcurrencyManager::class);
 
                 throw $e;
             }
