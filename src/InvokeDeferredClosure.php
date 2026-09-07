@@ -2,48 +2,31 @@
 
 namespace MathiasGrimm\QueueConcurrency;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Container\Container as ContainerContract;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Contracts\Container\Container;
+use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Queue\Jobs\SyncJob;
-use Laravel\SerializableClosure\SerializableClosure;
-use ReflectionFunction;
 use Throwable;
 
 /**
- * A fire and forget task dispatched by QueueDriver::defer().
+ * The job QueueDriver::defer() dispatches.
  *
- * It exists instead of CallQueuedClosure for one reason: on a synchronous
- * queue link a rethrown failure is not a recorded failure, it is what makes
- * a failover queue treat the link as dead and run the task again on the next
- * one. Everywhere else it behaves like CallQueuedClosure would: the worker
- * decides how many attempts it gets, the closure may ask for the job, and a
- * closure whose models are gone is discarded rather than failed.
+ * It is a CallQueuedClosure, so everything a deferred closure could observe
+ * about the job it used to receive still holds: the type it may be hinted
+ * on, the batch API, failure callbacks, the worker deciding retries, and a
+ * closure whose models are gone being discarded. It differs in one place: on
+ * a synchronous queue link a rethrown failure is not a recorded failure, it
+ * is what makes a failover queue treat the link as dead and run the task
+ * again on the next one, so there it reports the failure and returns.
  */
-class InvokeDeferredClosure implements ShouldQueue
+class InvokeDeferredClosure extends CallQueuedClosure
 {
-    use InteractsWithQueue, Queueable;
-
-    /**
-     * Delete the job when its models no longer exist, as CallQueuedClosure does.
-     *
-     * @var bool
-     */
-    public $deleteWhenMissingModels = true;
-
-    public function __construct(public SerializableClosure $task)
-    {
-        //
-    }
-
     /**
      * Execute the job.
      */
-    public function handle(ContainerContract $container): void
+    public function handle(Container $container): void
     {
         try {
-            $container->call($this->task->getClosure(), ['job' => $this]);
+            parent::handle($container);
         } catch (Throwable $e) {
             if ($this->job instanceof SyncJob) {
                 report($e);
@@ -53,15 +36,5 @@ class InvokeDeferredClosure implements ShouldQueue
 
             throw $e;
         }
-    }
-
-    /**
-     * Get the display name for the queued job.
-     */
-    public function displayName(): string
-    {
-        $reflection = new ReflectionFunction($this->task->getClosure());
-
-        return 'Deferred concurrency task ('.basename((string) $reflection->getFileName()).':'.$reflection->getStartLine().')';
     }
 }

@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Queue\Jobs\SyncJob;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Concurrency;
@@ -94,4 +95,32 @@ it('discards a deferred closure whose models are missing, as CallQueuedClosure d
         ->and((new ReflectionProperty(InvokeDeferredClosure::class, 'deleteWhenMissingModels'))->getDefaultValue())->toBeTrue()
         // No $tries on the class: the worker's --tries applies, as it did before.
         ->and(property_exists(InvokeDeferredClosure::class, 'tries'))->toBeFalse();
+});
+
+// The job defer() used to dispatch was a CallQueuedClosure, and a deferred
+// closure may have been written against that: typed on it, or reaching for
+// its batch. The replacement has to be one, not merely look like one.
+it('is a CallQueuedClosure, so a closure typed on it still runs', function () {
+    config()->set('queue.default', 'sync');
+
+    Concurrency::driver('queue')->defer([
+        function (CallQueuedClosure $job) {
+            Cache::store('file')->put('typed', 'ran', 60);
+        },
+    ])();
+
+    expect(Cache::store('file')->get('typed'))->toBe('ran')
+        ->and(is_subclass_of(InvokeDeferredClosure::class, CallQueuedClosure::class))->toBeTrue();
+});
+
+it('exposes the batch API a deferred closure may reach for', function () {
+    config()->set('queue.default', 'sync');
+
+    Concurrency::driver('queue')->defer([
+        function ($job) {
+            Cache::store('file')->put('batch', $job->batch() === null ? 'none' : 'some', 60);
+        },
+    ])();
+
+    expect(Cache::store('file')->get('batch'))->toBe('none');
 });
