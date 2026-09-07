@@ -185,6 +185,26 @@ read too, so a config written for the merged version keeps working:
 ],
 ```
 
+Two rules the concurrency manager's own routing imposes, both enforced with a
+clear exception rather than a silently wrong queue:
+
+- **Define an instance in one place, with at least one option.** Laravel's
+  manager also reads a legacy `concurrency.driver.<name>` array. When it finds
+  one it hands the driver that entry and nothing else, so options for the same
+  name kept under `queue-concurrency.instances` or `concurrency.drivers` could
+  never reach it. The package refuses that split. An entry that declares only
+  `'driver' => 'queue'` is refused too, because it is indistinguishable from
+  the default instance. Keep every option for the instance in the entry the
+  manager reads, or remove that entry.
+- **Instances are wired up the first time the concurrency manager is used.**
+  Config files and `AppServiceProvider::boot()` are both early enough. An
+  instance added to config after something has already called
+  `Concurrency::driver()` is not picked up until the next request.
+- **Do not name an instance `process`, `sync` or `fork`.** Custom creators win
+  over the manager's built in drivers, so an instance called `process` would
+  quietly turn the framework's default driver, and every plain
+  `Concurrency::run()`, queue backed. Those names are refused.
+
 ## Things to know
 
 - **The cache store must be shared between the caller and the workers.** That
@@ -204,6 +224,13 @@ read too, so a config written for the merged version keeps working:
 - **Failures are reported twice, deliberately.** The caller gets the original
   exception rethrown, and the worker still records a failed job, so nothing
   disappears from `failed_jobs` or Horizon.
+- **Tasks never see uncommitted data.** The jobs are dispatched immediately,
+  ignoring a connection's `after_commit` setting, because the caller blocks on
+  them and a job held until commit would never run before the timeout. The
+  consequence: `run()` inside `DB::transaction()` hands the workers a database
+  that does not yet contain the rows you just wrote. Commit first, then fan out.
+  `defer()` is the opposite, it dispatches ordinary queued closures that do
+  honour `after_commit`.
 - **The `sync` connection is supported and runs inline.** It is useful for
   tests and local work, but the tasks run one after another, so there is no
   parallelism to gain.
@@ -232,7 +259,10 @@ an import change:
 
 The package steps aside on its own: if `Illuminate\Concurrency\QueueDriver`
 ever exists, the service provider registers nothing and the first-party driver
-wins. You can then remove the package at your leisure.
+wins for `Concurrency::driver('queue')`. Named instances declared under
+`queue-concurrency.instances` are the exception: nothing else knows about them,
+so they stop resolving at that point. Move them to `concurrency.drivers` (which
+the merged framework reads) before upgrading, then remove the package.
 
 ## Testing
 

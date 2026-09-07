@@ -3,8 +3,8 @@ name: tests
 on:
   push:
     branches: [main]
+  # No branch filter: a pull request stacked on another branch needs CI too.
   pull_request:
-    branches: [main]
 
 jobs:
   php:

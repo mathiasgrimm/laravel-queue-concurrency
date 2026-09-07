@@ -4,7 +4,10 @@ namespace MathiasGrimm\QueueConcurrency;
 
 use Illuminate\Concurrency\ConcurrencyManager;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Str;
+use InvalidArgumentException;
 
 class QueueConcurrencyServiceProvider extends ServiceProvider
 {
@@ -35,10 +38,25 @@ class QueueConcurrencyServiceProvider extends ServiceProvider
             return;
         }
 
-        // Registering through afterResolving instead of the Concurrency facade
-        // keeps the framework's deferred ConcurrencyServiceProvider deferred:
-        // nothing resolves the manager until something asks for a driver.
-        $this->app->afterResolving(ConcurrencyManager::class, function ($manager) {
+        // callAfterResolving covers both boot orders. It registers for a future
+        // resolution, which keeps the framework's deferred provider deferred,
+        // and if another provider already resolved the manager singleton it
+        // runs right away against that instance instead of never.
+        $this->callAfterResolving(ConcurrencyManager::class, function (ConcurrencyManager $manager) {
+            try {
+                $this->guardAgainstAmbiguousInstances($manager);
+            } catch (InvalidArgumentException $e) {
+                // The container caches the singleton before this callback runs,
+                // so without evicting it a refused config would hand out a
+                // manager with no queue creators for the rest of the request,
+                // and the guard would never run again. The facade keeps its
+                // own copy of anything resolved through it, so clear that too.
+                $this->app->forgetInstance(ConcurrencyManager::class);
+                Facade::clearResolvedInstance(ConcurrencyManager::class);
+
+                throw $e;
+            }
+
             foreach ($this->instanceNames() as $name) {
                 $factory = new QueueDriverFactory($name);
 
@@ -63,7 +81,11 @@ class QueueConcurrencyServiceProvider extends ServiceProvider
     }
 
     /**
-     * Get every instance name that should resolve to a queue concurrency driver.
+     * Get every instance name that needs a creator of its own.
+     *
+     * A legacy "concurrency.driver.<name>" entry is deliberately absent: the
+     * manager routes it to the creator registered under its driver name and
+     * hands over the entry as the resolved config, so it needs no creator.
      *
      * @return array<int, string>
      */
@@ -73,15 +95,12 @@ class QueueConcurrencyServiceProvider extends ServiceProvider
 
         $names = [static::DRIVER];
 
-        // A named instance declared the way the framework pull request shapes
-        // it. A released manager never reads "concurrency.drivers", so the name
-        // is registered as its own creator and the options are read by the
-        // factory rather than handed over by the manager.
-        foreach (['concurrency.drivers', 'concurrency.driver'] as $key) {
-            foreach ((array) $config->get($key, []) as $name => $instance) {
-                if (is_array($instance) && ($instance['driver'] ?? null) === static::DRIVER) {
-                    $names[] = (string) $name;
-                }
+        // Named instances in the shape the framework pull request proposes. A
+        // released manager never reads "concurrency.drivers", so each name is
+        // registered as its own creator and the factory reads the options.
+        foreach ((array) $config->get('concurrency.drivers', []) as $name => $instance) {
+            if (is_array($instance) && ($instance['driver'] ?? null) === static::DRIVER) {
+                $names[] = (string) $name;
             }
         }
 
@@ -90,5 +109,52 @@ class QueueConcurrencyServiceProvider extends ServiceProvider
         }
 
         return array_values(array_unique($names));
+    }
+
+    /**
+     * Refuse configurations the manager's routing cannot honour, loudly, rather
+     * than letting an instance silently resolve with another instance's options.
+     *
+     * @throws InvalidArgumentException
+     */
+    protected function guardAgainstAmbiguousInstances(ConcurrencyManager $manager): void
+    {
+        $config = $this->app->make(ConfigRepository::class);
+
+        // Custom creators win over the manager's own create*Driver methods, so
+        // an instance called "process" would silently turn the framework's
+        // default driver, and every plain Concurrency::run(), queue backed.
+        foreach ($this->instanceNames() as $name) {
+            if ($name !== static::DRIVER && method_exists($manager, 'create'.Str::studly($name).'Driver')) {
+                throw new InvalidArgumentException(
+                    "The concurrency instance name [{$name}] is reserved by the concurrency manager's own [{$name}] driver. Choose another name for the queue instance."
+                );
+            }
+        }
+
+        foreach ((array) $config->get('concurrency.driver', []) as $name => $instance) {
+            if (! is_array($instance) || ($instance['driver'] ?? null) !== static::DRIVER) {
+                continue;
+            }
+
+            // A legacy entry with no options of its own is byte for byte the
+            // placeholder the manager invents for the unconfigured "queue"
+            // name, so the creator could never tell which instance it is
+            // building. Refusing it is what keeps that placeholder unambiguous.
+            if ($instance === ['driver' => static::DRIVER]) {
+                throw new InvalidArgumentException(
+                    "The concurrency instance [{$name}] under [concurrency.driver.{$name}] declares no options, which makes it indistinguishable from the default [queue] instance. Give it at least one option there, or resolve the default instance with Concurrency::driver('queue') instead."
+                );
+            }
+
+            // A legacy entry is routed to the "queue" creator with only that
+            // entry as its config, so options for the same name kept anywhere
+            // else can never reach it. Refuse the split instead of dropping them.
+            if (QueueDriverFactory::optionsFor($config, (string) $name) !== []) {
+                throw new InvalidArgumentException(
+                    "The concurrency instance [{$name}] is defined under [concurrency.driver.{$name}] and also has options under [queue-concurrency.instances.{$name}] or [concurrency.drivers.{$name}]. The concurrency manager only hands the driver the [concurrency.driver.{$name}] entry, so keep every option for that instance there, or remove that entry and define the instance in one place."
+                );
+            }
+        }
     }
 }

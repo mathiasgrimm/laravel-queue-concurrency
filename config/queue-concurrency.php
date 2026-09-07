@@ -93,7 +93,11 @@ return [
     |         'reports' => ['queue' => 'reports', 'timeout' => 120],
     |     ],
     |
-    | These are resolved with Concurrency::driver('reports').
+    | These are resolved with Concurrency::driver('reports'). A name may not be
+    | one the concurrency manager already provides (process, sync, fork), and
+    | an instance the manager reads from a legacy "concurrency.driver.<name>"
+    | entry must keep all of its options there, and declare at least one,
+    | since that entry is all the manager will hand over.
     |
     */
 
