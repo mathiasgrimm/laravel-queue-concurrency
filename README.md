@@ -232,8 +232,7 @@ clear exception rather than a silently wrong queue:
   them and a job held until commit would never run before the timeout. The
   consequence: `run()` inside `DB::transaction()` hands the workers a database
   that does not yet contain the rows you just wrote. Commit first, then fan out.
-  `defer()` is the opposite, it dispatches ordinary queued closures that do
-  honour `after_commit`.
+  `defer()` is the opposite: its deferred job does honour `after_commit`.
 - **The `sync` connection is supported and runs inline.** It is useful for
   tests and local work, but the tasks run one after another, so there is no
   parallelism to gain.
