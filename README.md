@@ -219,8 +219,11 @@ clear exception rather than a silently wrong queue:
 - **The wait is bounded, and that is the point.** Work the client should not
   wait for still belongs in an ordinary queued job.
 - **Task closures are serialized.** Keep them small and avoid capturing large
-  objects. Watch out in particular for defining them inside an arrow function,
-  which captures its enclosing scope by value.
+  objects. Two traps in particular: do not define a task inside an arrow
+  function, which captures its enclosing scope by value and can blow the stack
+  during serialization, and put each task on its own source line, because
+  closures with the same signature on one line cannot be told apart and the
+  later ones get the first one's body.
 - **Failures are reported twice, deliberately.** The caller gets the original
   exception rethrown, and the worker still records a failed job, so nothing
   disappears from `failed_jobs` or Horizon.
@@ -234,15 +237,37 @@ clear exception rather than a silently wrong queue:
 - **The `sync` connection is supported and runs inline.** It is useful for
   tests and local work, but the tasks run one after another, so there is no
   parallelism to gain.
+- **Failover chains are supported, with one honest caveat.** A `failover`
+  connection such as `['redis', 'sync']` works: while redis is up the tasks run
+  on workers, and if the chain falls through to `sync` they run right there in
+  the request, one after another and no longer bounded by the timeout. That is
+  what failover is for, and the driver cannot warn you it happened. A task that
+  fell to a real queue such as `database` needs a worker on that connection too,
+  since failover is push-only. Chains containing a connection that would never
+  run the tasks (`null`, `deferred`, `background`), chains that refer back to
+  themselves, and failover cache stores whose fallback is not shared are all
+  refused up front. A task's failure on a synchronous link is reported and
+  enveloped rather than rethrown, so it never reads as a dead link and never
+  runs again on the next one; `defer()` uses the same rule.
+- **A finished run leaves its cancellation flag behind** for the result
+  lifetime, so a job redelivered after the caller was answered refuses to run
+  instead of running the task a second time. Exactly-once still needs
+  idempotent tasks: two workers racing the same redelivered job can both get
+  past that check.
 
 ## Relationship to laravel/framework#61273
 
 This package is the code from
 [laravel/framework#61273](https://github.com/laravel/framework/pull/61273),
 packaged so it can be used before that pull request is reviewed and merged. The
-driver, the queued job, the result envelope and both exception classes are
-carried over from the pull request unchanged apart from their namespace, so the
-behaviour is the same one the pull request's test suite pins.
+result envelope and both exception classes are carried over unchanged apart from
+their namespace. The driver and the queued job started that way and are now a
+little ahead of the pull request, in changes that are proposed upstream: they
+handle failover chains correctly (a task failing on a synchronous link is not a
+dead link, a chain is validated link by link, a finished run leaves a tombstone,
+a job whose envelope already exists does not run again), and `defer()` dispatches
+the package's own job for the same reason. Everything else the pull request's
+test suite pins is preserved and covered here.
 
 No framework patch is needed. `ConcurrencyManager` extends
 `MultipleInstanceManager`, which already accepts custom driver creators, so the

@@ -1,13 +1,13 @@
 <?php
 
 use Carbon\CarbonInterval;
-use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Concurrency;
 use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
+use MathiasGrimm\QueueConcurrency\InvokeDeferredClosure;
 use MathiasGrimm\QueueConcurrency\TaskResult;
 use MathiasGrimm\QueueConcurrency\TaskTimedOutException;
 use MathiasGrimm\QueueConcurrency\Tests\Fixtures\ExceptionWithFalseyParam;
@@ -119,9 +119,11 @@ it('removes result keys from the cache after a run', function () {
         return Concurrency::driver('queue')->run([fn () => 1, fn () => 2]);
     });
 
+    // The result keys go; the cancellation key stays as a tombstone so a
+    // redelivered job refuses to run after the caller has been answered.
     expect(Cache::get("illuminate:concurrency:{$ulid}:0"))->toBeNull()
         ->and(Cache::get("illuminate:concurrency:{$ulid}:1"))->toBeNull()
-        ->and(Cache::get("illuminate:concurrency:{$ulid}:cancelled"))->toBeNull();
+        ->and(Cache::get("illuminate:concurrency:{$ulid}:cancelled"))->toBeTrue();
 });
 
 it('surfaces inline runs that exceed the timeout as task timeouts', function () {
@@ -211,7 +213,7 @@ it('fails without sleeping when an inline envelope is missing', function () {
     Sleep::assertNeverSlept();
 });
 
-it('dispatches CallQueuedClosure jobs when deferring', function () {
+it('dispatches one deferred job per task when deferring', function () {
     Bus::fake();
 
     $callback = Concurrency::driver('queue')->defer([fn () => 1, fn () => 2]);
@@ -220,7 +222,7 @@ it('dispatches CallQueuedClosure jobs when deferring', function () {
 
     $callback();
 
-    Bus::assertDispatchedTimes(CallQueuedClosure::class, 2);
+    Bus::assertDispatchedTimes(InvokeDeferredClosure::class, 2);
 });
 
 it('rejects process local cache stores for async queues', function (string $driver) {
