@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Concurrency\ConcurrencyManager;
+use Illuminate\Concurrency\SyncDriver;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Concurrency;
@@ -58,6 +59,51 @@ it('lets concurrency.drivers win over queue-concurrency.instances for the same n
     // only one defines still comes through.
     expect($job->queue)->toBe('from-drivers')
         ->and($job->timeout)->toBe(30);
+});
+
+// A bare legacy entry is byte for byte the placeholder the manager invents for
+// an unconfigured name, so the "queue" creator could never tell the two apart.
+// Refusing it is what makes the placeholder branch in the factory unambiguous.
+it('refuses a legacy instance that declares no options of its own', function () {
+    config()->set('concurrency.driver.reports', ['driver' => 'queue']);
+
+    Concurrency::driver('reports');
+})->throws(InvalidArgumentException::class, 'concurrency.driver.reports');
+
+it('does not let a legacy instance inherit the default instance overrides', function () {
+    config()->set('queue-concurrency.queue', 'global');
+    config()->set('concurrency.drivers.queue', ['driver' => 'queue', 'queue' => 'queue-specific']);
+    config()->set('concurrency.driver.reports', ['driver' => 'queue', 'timeout' => 120]);
+
+    Bus::fake();
+
+    $job = firstDispatchedJob(Concurrency::driver('reports'));
+
+    // Package defaults plus the entry's own options. The instance literally
+    // called "queue" is a sibling, not a parent.
+    expect($job->queue)->toBe('global')
+        ->and($job->timeout)->toBe(120);
+});
+
+it('re-validates on the next resolution after a guard failure', function () {
+    config()->set('queue-concurrency.instances.sync', ['queue' => 'hijacked']);
+
+    try {
+        Concurrency::driver('sync');
+
+        $this->fail('The reserved name should have been refused.');
+    } catch (InvalidArgumentException) {
+        //
+    }
+
+    // The container had already cached the manager when the guard threw. It
+    // must not hand that half initialised singleton out on the next call.
+    expect(fn () => Concurrency::driver('sync'))->toThrow(InvalidArgumentException::class);
+
+    config()->set('queue-concurrency.instances', []);
+
+    expect(Concurrency::driver('queue'))->toBeInstanceOf(QueueDriver::class)
+        ->and(Concurrency::driver('sync'))->toBeInstanceOf(SyncDriver::class);
 });
 
 it('refuses a legacy instance whose options are split across another config source', function () {

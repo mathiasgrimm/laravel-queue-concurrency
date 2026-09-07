@@ -42,7 +42,17 @@ class QueueConcurrencyServiceProvider extends ServiceProvider
         // and if another provider already resolved the manager singleton it
         // runs right away against that instance instead of never.
         $this->callAfterResolving(ConcurrencyManager::class, function (ConcurrencyManager $manager) {
-            $this->guardAgainstAmbiguousInstances($manager);
+            try {
+                $this->guardAgainstAmbiguousInstances($manager);
+            } catch (InvalidArgumentException $e) {
+                // The container caches the singleton before this callback runs,
+                // so without evicting it a refused config would hand out a
+                // manager with no queue creators for the rest of the request,
+                // and the guard would never run again.
+                $this->app->forgetInstance(ConcurrencyManager::class);
+
+                throw $e;
+            }
 
             foreach ($this->instanceNames() as $name) {
                 $factory = new QueueDriverFactory($name);
@@ -119,14 +129,24 @@ class QueueConcurrencyServiceProvider extends ServiceProvider
             }
         }
 
-        // A legacy entry is routed to the "queue" creator with only that entry
-        // as its config, so options for the same name kept anywhere else can
-        // never reach it. Refuse the split instead of dropping them.
         foreach ((array) $config->get('concurrency.driver', []) as $name => $instance) {
             if (! is_array($instance) || ($instance['driver'] ?? null) !== static::DRIVER) {
                 continue;
             }
 
+            // A legacy entry with no options of its own is byte for byte the
+            // placeholder the manager invents for the unconfigured "queue"
+            // name, so the creator could never tell which instance it is
+            // building. Refusing it is what keeps that placeholder unambiguous.
+            if ($instance === ['driver' => static::DRIVER]) {
+                throw new InvalidArgumentException(
+                    "The concurrency instance [{$name}] under [concurrency.driver.{$name}] declares no options, which makes it indistinguishable from the default [queue] instance. Give it at least one option there, or resolve the default instance with Concurrency::driver('queue') instead."
+                );
+            }
+
+            // A legacy entry is routed to the "queue" creator with only that
+            // entry as its config, so options for the same name kept anywhere
+            // else can never reach it. Refuse the split instead of dropping them.
             if (QueueDriverFactory::optionsFor($config, (string) $name) !== []) {
                 throw new InvalidArgumentException(
                     "The concurrency instance [{$name}] is defined under [concurrency.driver.{$name}] and also has options under [queue-concurrency.instances.{$name}] or [concurrency.drivers.{$name}]. The concurrency manager only hands the driver the [concurrency.driver.{$name}] entry, so keep every option for that instance there, or remove that entry and define the instance in one place."

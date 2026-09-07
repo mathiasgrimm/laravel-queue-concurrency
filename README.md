@@ -188,12 +188,14 @@ read too, so a config written for the merged version keeps working:
 Two rules the concurrency manager's own routing imposes, both enforced with a
 clear exception rather than a silently wrong queue:
 
-- **Define an instance in one place.** Laravel's manager also reads a legacy
-  `concurrency.driver.<name>` array. When it finds one it hands the driver that
-  entry and nothing else, so options for the same name kept under
-  `queue-concurrency.instances` or `concurrency.drivers` could never reach it.
-  The package refuses that split. Keep every option for the instance in the
-  entry the manager reads, or remove that entry.
+- **Define an instance in one place, with at least one option.** Laravel's
+  manager also reads a legacy `concurrency.driver.<name>` array. When it finds
+  one it hands the driver that entry and nothing else, so options for the same
+  name kept under `queue-concurrency.instances` or `concurrency.drivers` could
+  never reach it. The package refuses that split. An entry that declares only
+  `'driver' => 'queue'` is refused too, because it is indistinguishable from
+  the default instance. Keep every option for the instance in the entry the
+  manager reads, or remove that entry.
 - **Instances are wired up the first time the concurrency manager is used.**
   Config files and `AppServiceProvider::boot()` are both early enough. An
   instance added to config after something has already called

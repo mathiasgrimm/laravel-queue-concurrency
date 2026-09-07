@@ -35,7 +35,9 @@ class QueueDriverFactory
         // entry as $resolved. Anything richer than the bare placeholder the
         // manager invents for an unconfigured name is therefore a complete
         // instance config for some other instance, and this factory's own
-        // name keyed options must stay out of it.
+        // name keyed options must stay out of it. The bare shape can only be
+        // the placeholder because the service provider refuses a legacy entry
+        // that declares no options, which is the one other way to produce it.
         $placeholder = $resolved === [] || $resolved === ['driver' => $this->name];
 
         $options = array_merge(
