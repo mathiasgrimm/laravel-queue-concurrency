@@ -264,8 +264,9 @@ their namespace. The driver and the queued job started that way and are now a
 little ahead of the pull request, in changes that are proposed upstream: they
 handle failover chains correctly (a task failing on a synchronous link is not a
 dead link, a chain is validated link by link, a finished run leaves a tombstone,
-a job whose envelope already exists does not run again), and `defer()` dispatches
-the package's own job for the same reason. Everything else the pull request's
+a job whose envelope already exists does not run again), `defer()` dispatches
+the package's own job for the same reason, and results are read through the cache
+contract's `getMultiple()` rather than the concrete repository's `many()`. Everything else the pull request's
 test suite pins is preserved and covered here.
 
 No framework patch is needed. `ConcurrencyManager` extends
