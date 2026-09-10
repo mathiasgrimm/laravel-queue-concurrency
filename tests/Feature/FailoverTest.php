@@ -182,6 +182,24 @@ it('refuses a process local store when a mixed chain can reach a real queue', fu
     Concurrency::driver('queue')->run([fn () => 1], timeout: 1);
 })->throws(RuntimeException::class, 'is not shared across processes');
 
+// The mirror image: a sync link last does not make [database, sync] inline
+// either, since the job may well land on the database queue.
+it('refuses a process local store when a sync link comes last', function () {
+    useChain(['database', 'sync']);
+    config()->set('cache.default', 'array');
+
+    Concurrency::driver('queue')->run([fn () => 1], timeout: 1);
+})->throws(RuntimeException::class, 'is not shared across processes');
+
+// A nested failover link is only inline if its own links are.
+it('refuses a process local store when a nested chain can reach a real queue', function () {
+    config()->set('queue.connections.inner', ['driver' => 'failover', 'connections' => ['database']]);
+    useChain(['inner']);
+    config()->set('cache.default', 'array');
+
+    Concurrency::driver('queue')->run([fn () => 1], timeout: 1);
+})->throws(RuntimeException::class, 'is not shared across processes');
+
 it('refuses a chain containing a connection that would never run the tasks', function (string $driver) {
     config()->set('queue.connections.never', ['driver' => $driver]);
     useChain(['dead', 'never']);
