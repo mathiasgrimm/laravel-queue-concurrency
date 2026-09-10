@@ -248,6 +248,10 @@ clear exception rather than a silently wrong queue:
   refused up front. A task's failure on a synchronous link is reported and
   enveloped rather than rethrown, so it never reads as a dead link and never
   runs again on the next one; `defer()` uses the same rule.
+- **A failover cache store can hide a result during an outage.** If the main
+  store is down and a result is written to a backup store, that result cannot be
+  read once the main store comes back, and the run times out. Point the driver
+  at a single shared store rather than a failover store to avoid it.
 - **A finished run leaves its cancellation flag behind** for the result
   lifetime, so a job redelivered after the caller was answered refuses to run
   instead of running the task a second time. Exactly-once still needs
@@ -263,8 +267,9 @@ result envelope and both exception classes are carried over unchanged apart from
 their namespace. The driver and the queued job started that way and are now a
 little ahead of the pull request, in changes that are proposed upstream: they
 handle failover chains correctly (a task failing on a synchronous link is not a
-dead link, a chain is validated link by link, a finished run leaves a tombstone,
-a job whose envelope already exists does not run again), `defer()` dispatches
+dead link, a chain is validated link by link, a finished run leaves a cancel flag
+so a redelivered job skips itself, a job whose result already exists does not
+run again), `defer()` dispatches
 the package's own job for the same reason, and results are read through the cache
 contract's `getMultiple()` rather than the concrete repository's `many()`. Everything else the pull request's
 test suite pins is preserved and covered here.

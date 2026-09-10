@@ -10,23 +10,17 @@ use Laravel\SerializableClosure\SerializableClosure;
 use Throwable;
 
 /**
- * The job QueueDriver::defer() dispatches.
- *
- * It is a CallQueuedClosure, so everything a deferred closure could observe
- * about the job it used to receive still holds: the type it may be hinted
- * on, the batch API, failure callbacks, the worker deciding retries, and a
- * closure whose models are gone being discarded. It differs in one place: on
- * a synchronous queue link a rethrown failure is not a recorded failure, it
- * is what makes a failover queue treat the link as dead and run the task
- * again on the next one, so there it reports the failure and returns.
+ * A queued closure that reports a failure on a sync connection instead of
+ * rethrowing it, so a failover connection does not treat the failure as the
+ * connection being down and run the task again.
  */
 class InvokeDeferredClosure extends CallQueuedClosure
 {
     /**
      * Create a new job instance.
      *
-     * CallQueuedClosure::create() says "new self", which would hand back the
-     * parent class and lose the synchronous link rule below.
+     * The parent's create() uses "new self", which would return a
+     * CallQueuedClosure and skip the sync handling below.
      */
     public static function create(Closure $job): static
     {
