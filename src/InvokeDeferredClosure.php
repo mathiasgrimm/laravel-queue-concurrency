@@ -2,9 +2,11 @@
 
 namespace MathiasGrimm\QueueConcurrency;
 
+use Closure;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Queue\Jobs\SyncJob;
+use Laravel\SerializableClosure\SerializableClosure;
 use Throwable;
 
 /**
@@ -20,6 +22,17 @@ use Throwable;
  */
 class InvokeDeferredClosure extends CallQueuedClosure
 {
+    /**
+     * Create a new job instance.
+     *
+     * CallQueuedClosure::create() says "new self", which would hand back the
+     * parent class and lose the synchronous link rule below.
+     */
+    public static function create(Closure $job): static
+    {
+        return new static(new SerializableClosure($job));
+    }
+
     /**
      * Execute the job.
      */

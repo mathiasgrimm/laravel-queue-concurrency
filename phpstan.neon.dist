@@ -25,3 +25,10 @@ parameters:
         -
             identifier: missingType.parameter
             path: src/InvokeQueuedClosure.php
+        # InvokeDeferredClosure::create() must return the subclass, which is what
+        # "new static" is for; the constructor it inherits from CallQueuedClosure
+        # takes one SerializableClosure and nothing here changes that. The
+        # framework's own configuration ignores the same diagnostic.
+        -
+            identifier: new.static
+            path: src/InvokeDeferredClosure.php

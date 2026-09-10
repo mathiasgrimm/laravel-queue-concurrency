@@ -6,6 +6,7 @@ use Illuminate\Queue\Jobs\SyncJob;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Concurrency;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Schema;
 use MathiasGrimm\QueueConcurrency\InvokeDeferredClosure;
 use MathiasGrimm\QueueConcurrency\Tests\TestCase;
@@ -55,7 +56,11 @@ it('lets the worker retry a deferred task that fails once', function () {
     prepareDatabaseQueueForDeferred();
 
     Concurrency::driver('queue')->defer([
-        function () {
+        function ($job) {
+            // The queue's own attempt counter, so a retry of the same job
+            // cannot be confused with a fresh dispatch that also ran twice.
+            Cache::store('file')->put('attempts seen', $job->job->attempts(), 60);
+
             if (Cache::store('file')->increment('attempts') === 1) {
                 throw new RuntimeException('first attempt fails');
             }
@@ -69,6 +74,7 @@ it('lets the worker retry a deferred task that fails once', function () {
     $this->artisan('queue:work', ['connection' => 'database', '--once' => true, '--tries' => 2, '--sleep' => 0])->run();
 
     expect(Cache::store('file')->get('attempts'))->toBe(2)
+        ->and(Cache::store('file')->get('attempts seen'))->toBe(2)
         ->and(Cache::store('file')->get('outcome'))->toBe('succeeded on retry')
         ->and(DB::table('failed_jobs')->count())->toBe(0)
         ->and(DB::table('jobs')->count())->toBe(0);
@@ -123,4 +129,25 @@ it('exposes the batch API a deferred closure may reach for', function () {
     ])();
 
     expect(Cache::store('file')->get('batch'))->toBe('none');
+});
+
+it('reports a failing deferred task on sync and still runs the later ones', function () {
+    config()->set('queue.default', 'sync');
+    Exceptions::fake();
+
+    // On a real queue one task's failure never stops the others; the sync
+    // connection behaves the same way instead of letting the first failure
+    // escape the deferred callback.
+    Concurrency::driver('queue')->defer([
+        fn () => throw new DomainException('first deferred task failed'),
+        fn () => Cache::store('file')->put('second', 'ran', 60),
+    ])();
+
+    expect(Cache::store('file')->get('second'))->toBe('ran');
+
+    Exceptions::assertReported(DomainException::class);
+});
+
+it('returns the deferred job class from create()', function () {
+    expect(InvokeDeferredClosure::create(fn () => 1))->toBeInstanceOf(InvokeDeferredClosure::class);
 });

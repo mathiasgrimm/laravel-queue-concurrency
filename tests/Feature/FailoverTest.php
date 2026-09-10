@@ -173,6 +173,15 @@ it('treats a chain made only of sync links as inline', function () {
     expect(Concurrency::driver('queue')->run([fn () => 7]))->toBe([7]);
 });
 
+// A chain is inline only if every link is: a sync link first does not make
+// [sync, database] safe for a store the database worker cannot see.
+it('refuses a process local store when a mixed chain can reach a real queue', function () {
+    useChain(['sync', 'database']);
+    config()->set('cache.default', 'array');
+
+    Concurrency::driver('queue')->run([fn () => 1], timeout: 1);
+})->throws(RuntimeException::class, 'is not shared across processes');
+
 it('refuses a chain containing a connection that would never run the tasks', function (string $driver) {
     config()->set('queue.connections.never', ['driver' => $driver]);
     useChain(['dead', 'never']);
