@@ -4,11 +4,14 @@ namespace MathiasGrimm\QueueConcurrency;
 
 use Carbon\CarbonInterval;
 use Closure;
+use Illuminate\Cache\RedisStore;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Cache\Store;
 use Illuminate\Contracts\Concurrency\Driver;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Defer\DeferredCallback;
@@ -63,6 +66,7 @@ class QueueDriver implements Driver
         $startedAt = Carbon::now();
         $runId = (string) Str::ulid();
         $cancellationKey = $this->cancellationKey($runId);
+        $notifyKey = $this->notifyKey($runId);
         $repository = $this->cache->store($store);
 
         [$keys, $collected] = $this->dispatchTasks(
@@ -74,7 +78,7 @@ class QueueDriver implements Driver
                 $repository, $keys, $collected, $startedAt, $timeout, $connection, $store,
             )
             : $this->wait(
-                $repository, $keys, $collected, $cancellationKey, $startedAt, $timeout, $ttl, $connection, $store,
+                $repository, $keys, $collected, $cancellationKey, $startedAt, $timeout, $ttl, $connection, $store, $notifyKey,
             );
 
         return $this->resolveResults($repository, $tasks, $keys, $cancellationKey, $envelopes, $ttl);
@@ -99,6 +103,9 @@ class QueueDriver implements Driver
     ): array {
         $deadline = $startedAt->getTimestamp() + $timeout;
 
+        // Nobody waits on an inline run, so there is no caller for its jobs to wake.
+        $notifyKey = $inline ? null : $this->notifyKey($runId);
+
         $keys = [];
         $collected = [];
 
@@ -117,6 +124,7 @@ class QueueDriver implements Driver
                 );
 
                 $job->timeout = $timeout;
+                $job->notifyKey = $notifyKey;
 
                 $job->onConnection($connection);
 
@@ -288,6 +296,7 @@ class QueueDriver implements Driver
         int $ttl,
         ?string $connection,
         ?string $store,
+        string $notifyKey,
     ): array {
         // getMultiple() rather than many(): the former is on the cache contract
         // this method is typed against, the latter only on Laravel's concrete
@@ -327,7 +336,7 @@ class QueueDriver implements Driver
                 );
             }
 
-            Sleep::usleep((int) (max(min($poll, $deadline - $now), 1) * 1000));
+            $this->pause($repository, $notifyKey, max(min($poll, $deadline - $now), 1));
 
             foreach ($repository->getMultiple(array_keys($envelopes, null, true)) as $key => $envelope) {
                 $envelopes[$key] = $envelope;
@@ -337,6 +346,50 @@ class QueueDriver implements Driver
                 return $envelopes;
             }
         }
+    }
+
+    /**
+     * Pause until a worker reports a result or the given number of milliseconds pass.
+     *
+     * A Redis store lets the caller block on the run's notify list, so it wakes
+     * as soon as a result is stored. Every other store sleeps for the interval.
+     */
+    protected function pause(CacheRepository $repository, string $notifyKey, float $milliseconds): void
+    {
+        $store = $repository->getStore();
+
+        if ($this->canBlockOn($store)) {
+            $startedAt = Carbon::now();
+
+            try {
+                if (! is_null($store->connection()->blpop([$store->getPrefix().$notifyKey], $milliseconds / 1000))) {
+                    return;
+                }
+            } catch (Throwable) {
+                //
+            }
+
+            // A pop that fails (a Redis server before 6 refuses sub-second timeouts)
+            // comes back early with nothing, so sleep out the rest of the interval.
+            $milliseconds -= $startedAt->diffInMilliseconds(Carbon::now());
+        }
+
+        if ($milliseconds >= 1) {
+            Sleep::usleep((int) ($milliseconds * 1000));
+        }
+    }
+
+    /**
+     * Determine if the caller can block on the given store's notify list.
+     *
+     * @phpstan-assert-if-true RedisStore $store
+     */
+    protected function canBlockOn(Store $store): bool
+    {
+        // phpredis before 6 takes whole-second timeouts only, and a fraction is a fatal error.
+        return $store instanceof RedisStore && (
+            ! $store->connection() instanceof PhpRedisConnection || version_compare(phpversion('redis'), '6.0', '>=')
+        );
     }
 
     /**
@@ -505,5 +558,13 @@ class QueueDriver implements Driver
     protected function cancellationKey(string $runId): string
     {
         return "illuminate:concurrency:{$runId}:cancelled";
+    }
+
+    /**
+     * Get the Redis list key that wakes the caller when the given run's tasks finish.
+     */
+    protected function notifyKey(string $runId): string
+    {
+        return "illuminate:concurrency:{$runId}:notify";
     }
 }

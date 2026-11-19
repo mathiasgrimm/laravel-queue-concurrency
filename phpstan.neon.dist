@@ -11,11 +11,12 @@ parameters:
         # QueueDriver, InvokeQueuedClosure and TaskResult come from
         # laravel/framework#61273. TaskResult is still verbatim; the other two are
         # now AHEAD of the pull request (failover handling, duplicate protection,
-        # reading through getMultiple()) and must never be overwritten from
-        # upstream without carrying those changes over. None of the three
-        # annotates array shapes to this level, and doing so here would only
-        # widen the diff to the upstream files they are meant to be reconciled
-        # with. Everything this package writes itself is checked at level 6.
+        # reading through getMultiple(), the Redis wake-up) and must never be
+        # overwritten from upstream without carrying those changes over. None of
+        # the three annotates array shapes to this level, and doing so here would
+        # only widen the diff to the upstream files they are meant to be
+        # reconciled with. Everything this package writes itself is checked at
+        # level 6.
         -
             identifier: missingType.iterableValue
             paths:

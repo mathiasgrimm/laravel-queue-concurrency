@@ -19,6 +19,12 @@ jobs:
           - php: '8.2'
             laravel: '^13.0'
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +32,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
+          extensions: redis
           coverage: none
 
       - name: Install dependencies

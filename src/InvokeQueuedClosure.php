@@ -3,6 +3,7 @@
 namespace MathiasGrimm\QueueConcurrency;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Cache\RedisStore;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Container\Container as ContainerContract;
@@ -39,6 +40,13 @@ class InvokeQueuedClosure implements ShouldQueue
      * @var int|null
      */
     public $timeout;
+
+    /**
+     * The Redis list the waiting caller blocks on until a result is stored.
+     *
+     * @var string|null
+     */
+    public $notifyKey;
 
     public function __construct(
         public string $resultKey,
@@ -116,6 +124,25 @@ class InvokeQueuedClosure implements ShouldQueue
         } catch (Throwable) {
             $repository->add($this->resultKey, array_merge($result, ['parameters' => []]), $this->ttl);
         }
+
+        $this->notifyCaller($repository);
+    }
+
+    /**
+     * Wake the caller if it is blocking on the Redis store for this result.
+     */
+    protected function notifyCaller($repository): void
+    {
+        $store = $repository->getStore();
+
+        if (is_null($this->notifyKey) || ! $store instanceof RedisStore) {
+            return;
+        }
+
+        $key = $store->getPrefix().$this->notifyKey;
+
+        $store->connection()->rpush($key, 1);
+        $store->connection()->expire($key, $this->ttl);
     }
 
     /**
