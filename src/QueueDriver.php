@@ -99,6 +99,9 @@ class QueueDriver implements Driver
     ): array {
         $deadline = $startedAt->getTimestamp() + $timeout;
 
+        // Nobody waits on an inline run, so there is no caller for its jobs to wake.
+        $notifyKey = $inline ? null : $this->notifyKey($runId);
+
         $keys = [];
         $collected = [];
 
@@ -117,6 +120,7 @@ class QueueDriver implements Driver
                 );
 
                 $job->timeout = $timeout;
+                $job->notifyKey = $notifyKey;
 
                 $job->onConnection($connection);
 
@@ -505,5 +509,13 @@ class QueueDriver implements Driver
     protected function cancellationKey(string $runId): string
     {
         return "illuminate:concurrency:{$runId}:cancelled";
+    }
+
+    /**
+     * Get the Redis list key that wakes the caller when the given run's tasks finish.
+     */
+    protected function notifyKey(string $runId): string
+    {
+        return "illuminate:concurrency:{$runId}:notify";
     }
 }
