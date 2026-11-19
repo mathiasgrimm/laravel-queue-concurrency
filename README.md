@@ -57,6 +57,8 @@ submit-poll-webhook flow just because the work is too heavy for the web node.
   with `onConnection()`, `onQueue()` and `store()`.
 - **Bounded waits.** A configurable timeout, after which the caller gets a
   `TaskTimedOutException` naming exactly how many results arrived.
+- **Instant wake-up on Redis.** With a `redis` result store the caller blocks
+  until a worker stores a result instead of sleeping between polls.
 - **Cooperative cancellation.** A timed out run writes a cancellation flag, so
   a worker that picks the jobs up afterwards refuses to run them.
 - **Failures stay visible.** A failing task still lands in `failed_jobs` and
@@ -158,7 +160,7 @@ try {
 | `store` | `CONCURRENCY_CACHE_STORE` | `cache.default` | The cache store results travel back through. |
 | `timeout` | `CONCURRENCY_TIMEOUT` | `60` | Seconds the caller blocks before throwing. |
 | `ttl` | | `timeout + 60` | Seconds a result envelope is kept. Never lower than the timeout plus 60 seconds of grace. |
-| `poll` | | `100` | Milliseconds between checks for results. The final wait is clamped to the remaining budget. |
+| `poll` | | `100` | Milliseconds between checks for results. A `redis` store wakes the caller as soon as a result lands, so there it is only the longest wait between checks. The final wait is clamped to the remaining budget. |
 
 ### Named instances
 
@@ -271,7 +273,8 @@ dead link, a chain is validated link by link, a finished run leaves a cancel fla
 so a redelivered job skips itself, a job whose result already exists does not
 run again), `defer()` dispatches
 the package's own job for the same reason, and results are read through the cache
-contract's `getMultiple()` rather than the concrete repository's `many()`. Everything else the pull request's
+contract's `getMultiple()` rather than the concrete repository's `many()`. A
+Redis result store also wakes the caller instead of being polled. Everything else the pull request's
 test suite pins is preserved and covered here.
 
 No framework patch is needed. `ConcurrencyManager` extends
@@ -302,9 +305,12 @@ composer analyse
 composer lint
 ```
 
+The Redis tests connect to `REDIS_HOST` (default `127.0.0.1`), flush cache
+database 15, and are skipped when Redis is not reachable.
+
 There is also a throwaway application under `workbench/` for driving the driver
-by hand against genuinely separate worker processes, which no in-process test
-can do. Build it once:
+by hand against genuinely separate worker processes and stores other than Redis.
+Build it once:
 
 ```bash
 vendor/bin/testbench workbench:build
